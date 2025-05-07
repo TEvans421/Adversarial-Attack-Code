@@ -1,0 +1,86 @@
+# attack_fgsm.py
+# FGSM Adversarial Attack on a Malware Detection CNN
+
+import torch
+import torch.nn as nn
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+
+# ========================
+# FGSM ATTACK FUNCTION
+# ========================
+def fgsm(model, criterion, images, labels, step_size):
+    """
+    Fast Gradient Sign Method (FGSM) attack implementation.
+    Args:
+        model: Trained PyTorch model.
+        criterion: Loss function.
+        images: Input tensor batch.
+        labels: Ground truth labels.
+        step_size: Epsilon, the perturbation magnitude.
+
+    Returns:
+        Adversarial examples tensor.
+    """
+    images.requires_grad = True  # Enable gradient tracking for input
+
+    outputs = model(images)  # Forward pass
+    model.zero_grad()        # Zero out any old gradients
+    loss = criterion(outputs, labels)  # Calculate loss
+    loss.backward()          # Backpropagate to get input gradients
+
+    # Apply FGSM: Add perturbation in the direction of gradient sign
+    ae_images = images + step_size * images.grad.sign()
+
+    # Clamp values to keep them valid (e.g., pixel range or normalized input range)
+    ae_images = torch.clamp(ae_images, 0, 1)
+
+    return ae_images
+
+
+# ========================
+# MAIN EVALUATION LOOP
+# ========================
+
+# Set device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Load the trained model
+model = MyMalwareCNN()
+model.load_state_dict(torch.load("model.pth", map_location=device))  # Make sure model.pth exists
+model.to(device)
+model.eval()
+
+# Loss function
+criterion = nn.CrossEntropyLoss()
+
+# Load your test data
+# NOTE: Replace this with your own malware dataset loader
+transform = transforms.ToTensor()
+test_dataset = datasets.MNIST(root='./data', train=False, transform=transform, download=True)
+test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+
+# Attack and Evaluate
+correct = 0
+total = 0
+
+for images, labels in test_loader:
+    images = images.to(device)
+    labels = labels.to(device)
+
+    # Generate adversarial examples
+    ae_images = fgsm(model, criterion, images, labels, step_size=0.15)
+
+    # Evaluate on adversarial examples
+    outputs = model(ae_images)
+    _, predicted = torch.max(outputs.data, 1)
+    total += labels.size(0)
+    correct += (predicted == labels).sum().item()
+
+# Print final accuracy
+print(f"Accuracy on adversarial test examples: {100 * correct / total:.2f}%")
+print(f"Attack success rate: {100 - (100 * correct / total):.2f}%")
+
+# Show some adversarial samples (optional)
+show_images(images[:10].detach())  # Original
+show_images_withPred(ae_images[:10].detach(), labels[:10], outputs[:10].argmax(dim=1))  # Adversarial
